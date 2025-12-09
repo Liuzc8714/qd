@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AI李探长-排错版</title>
+<style>
+  body{margin:0;background:#000;color:#0f0;font-family:monospace}
+  #debug{position:fixed;top:10px;left:10px;white-space:pre}
+  #canvas{display:block;width:100vw;height:100vh}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<pre id="debug">等待摄像头授权...</pre>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@0.5.0/dist/hand-pose-detection.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+<script>
+/* ========== 排错日志 ========== */
+const log=(...a)=>{const d=document.getElementById('debug');d.textContent+=a.join(' ')+'\n';};
+const err=e=>{log('❌'+e);alert(e);};
+
+/* ========== 1. 强制 HTTPS 检查 ========== */
+if(location.protocol!=='https:' && location.hostname!=='localhost'){
+  err('请使用 https 访问，否则浏览器会阻止摄像头');
+}
+
+/* ========== 2. 申请摄像头 ========== */
+async function initCam(){
+  try{
+    const v=document.createElement('video');
+    v.playsInline=true;v.autoplay=true;v.muted=true;
+    const stream=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,frameRate:30}});
+    v.srcObject=stream;
+    log('摄像头已授权，等待第一帧...');
+    await new Promise((res,rej)=>{
+      v.onloadedmetadata=()=>res();
+      v.onerror=rej;
+    });
+    log('视频流就绪，初始化模型...');
+    return v;
+  }catch(e){
+    err('摄像头启动失败：'+e.message);
+    throw e;
+  }
+}
+
+/* ========== 3. 初始化 TF 模型 ========== */
+async function initModel(v){
+  try{
+    const model=handPoseDetection.SupportedModels.MediaPipeHands;
+    const detector=await handPoseDetection.createDetector(model,{
+      runtime:'tfjs',
+      modelType:'lite',
+      maxHands:1
+    });
+    log('模型加载完成，开始跟踪');
+    return detector;
+  }catch(e){
+    err('模型加载失败：'+e.message);
+    throw e;
+  }
+}
+
+/* ========== 4. Three 极简粒子 ========== */
+function initThree(){
+  const scene=new THREE.Scene();
+  const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,1,2000);
+  const renderer=new THREE.WebGLRenderer({canvas:document.getElementById('canvas'),antialias:true});
+  renderer.setSize(innerWidth,innerHeight);
+  camera.position.z=400;
+
+  const N=15000,geom=new THREE.BufferGeometry();
+  const pos=new Float32Array(N*3);
+  for(let i=0;i<N*3;i++)pos[i]=(Math.random()-0.5)*400;
+  geom.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  const mat=new THREE.PointsMaterial({color:0x00ffff,size:2});
+  const pts=new THREE.Points(geom,mat);
+  scene.add(pts);
+  return{scene,camera,renderer,pts};
+}
+const three=initThree();
+
+/* ========== 5. 主循环 ========== */
+async function main(){
+  const video=await initCam();
+  const det=await initModel(video);
+  const loop=async()=>{
+    const hands=await det.estimateHands(video,{flipHorizontal:true});
+    if(hands.length>0){
+      log('检测到手的帧');        // ← 一旦这里连续出现，说明识别成功
+    }
+    three.renderer.render(three.scene,three.camera);
+    requestAnimationFrame(loop);
+  };
+  loop();
+}
+main().catch(err);
+</script>
+</body>
+</html>
